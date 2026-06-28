@@ -1,61 +1,45 @@
-# SFTTrainer Guide
+# SFTTrainer Guide (Analytical)
 
-This document explains what `SFTTrainer` does in our training pipeline, with concrete examples from `train/train_qlora.py`.
+This document explains what `SFTTrainer` does in our training pipeline. Each section has four parts:
+
+- **Mechanism** — what actually happens internally
+- **Why it matters** — the reason the knob exists
+- **Trade-off** — what you gain and lose
+- **In our repo** — the concrete value we use and why
+
+It reflects the current code in `train/train_qlora.py` and `configs/train_qlora.yaml`.
 
 ## What is SFTTrainer?
 
-`SFTTrainer` comes from the **TRL** library (Transformers Reinforcement Learning).
+**Mechanism.** `SFTTrainer` (from TRL) is a subclass of the Hugging Face `Trainer`. It wraps the full supervised fine-tuning loop: dataset tokenization, batching, the forward/backward passes, optimizer stepping, evaluation, logging, and checkpointing. It is specialized for the common case "train a causal LM to continue text."
 
-```text
-SFT = Supervised Fine-Tuning
-```
+**Why it matters.** Writing a correct training loop by hand is error-prone: gradient accumulation, mixed precision, distributed sync, checkpoint resumption, and label shifting all have subtle bugs. `SFTTrainer` gives a battle-tested loop so we only supply data + config.
 
-It fine-tunes a language model on labeled examples:
+**Trade-off.** You trade transparency for reliability. The loop is hidden, so when something breaks (e.g. the bf16/fp16 GradScaler crash we hit), you must understand the internals to debug it. It is not magic — it is a well-tested default.
 
-```text
-input text  →  expected continuation
-```
-
-In our case:
-
-```text
-user request  →  Python code answer
-```
-
-We use it together with:
-
-- `SFTConfig` — training settings
-- `LoraConfig` — LoRA adapter settings
-- a Hugging Face `Dataset` with a `text` column
-
----
-
-## Where it appears in our code
+**In our repo.** We use it with `SFTConfig` (training settings) and a dataset whose rows already contain a `text` field. Note: in the current code we apply LoRA *before* constructing the trainer via `get_peft_model(...)`, so we no longer pass `peft_config` to `SFTTrainer`.
 
 ```python
 from trl import SFTConfig, SFTTrainer
 
-training_args = SFTConfig(...)
+model = get_peft_model(model, peft_config)   # LoRA applied here
 trainer = SFTTrainer(
     model=model,
-    args=training_args,
+    args=SFTConfig(...),
     train_dataset=train_ds,
     eval_dataset=eval_ds,
     processing_class=tokenizer,
-    peft_config=peft_config,
 )
 trainer.train()
 ```
 
-`SFTTrainer` is the object that runs the full training loop.
-
 ---
 
-## End-to-end example
+## End-to-end data flow
+
+Tracing one example all the way through clarifies what each later section controls.
 
 ### 1. Raw dataset row
-
-From `iamtarun/python_code_instructions_18k_alpaca`:
 
 ```json
 {
@@ -65,9 +49,7 @@ From `iamtarun/python_code_instructions_18k_alpaca`:
 }
 ```
 
-### 2. Our formatter converts it to `text`
-
-From `train/dataset.py`:
+### 2. Our formatter builds `text` (`train/dataset.py`)
 
 ```text
 <|im_start|>user
@@ -77,606 +59,301 @@ def add(a, b):
     return a + b
 ```
 
-### 3. SFTTrainer tokenizes it
+**Analysis.** The model never sees `instruction`/`input`/`output` as separate fields. We collapse them into one flat string using chat markers. The model learns the *statistical pattern* "after `<|im_start|>assistant`, code that solves the request tends to follow." Everything downstream operates on this string.
 
-Tokenizer converts text to token IDs:
+### 3. Tokenization → IDs
 
 ```text
-[151644, 8948, 198, 2610, 525, ...]
+"def add(a, b):" → [707, 1304, 2386, 11, 293, 1648, ...]
 ```
 
-### 4. SFTTrainer builds tensors
-
-For one training example:
+### 4. Tensor construction
 
 ```python
-input_ids = [t1, t2, t3, ..., tN]
-labels    = [t1, t2, t3, ..., tN]
-attention_mask = [1, 1, 1, ..., 1]
+input_ids      = [t0, t1, t2, ..., tN]
+labels         = [t0, t1, t2, ..., tN]   # shifted internally by 1
+attention_mask = [1,  1,  1,  ..., 1]
 ```
 
-### 5. Model predicts next token
+### 5. Next-token objective
 
-For causal language modeling, the model learns:
+The model predicts token `t_{i+1}` from tokens `t_0..t_i` for every position simultaneously (causal masking makes this one parallel forward pass, not a Python loop).
 
-```text
-given tokens [t1, t2, t3] predict t4
-given tokens [t1, t2, t3, t4] predict t5
-...
-```
+### 6. Loss
 
-### 6. Loss is computed
+Cross-entropy between predicted distribution and the true next token, averaged over all non-ignored positions.
 
-If predicted token != target token, loss increases.
+### 7. Backward → LoRA update
 
-### 7. Backprop updates LoRA weights only
-
-Because we pass `peft_config`, only LoRA adapter weights are updated.
+Gradients flow only into trainable LoRA params (everything else is frozen / 4-bit).
 
 ---
 
-## What SFTTrainer handles for us
+## 1. Reading text from the dataset
 
-You do **not** need to manually write:
+**Mechanism.** `dataset_text_field="text"` tells the trainer which column holds the training string. It maps a tokenization function over the dataset, producing `input_ids`/`attention_mask`.
 
-- tokenization loop
-- batching
-- padding
-- forward pass loop
-- backward pass loop
-- optimizer step
-- checkpoint saving
-- evaluation loop
+**Why it matters.** Datasets often have many columns. This is the explicit contract for "this is the thing to train on." If it points at the wrong column, you silently train on garbage.
 
-`SFTTrainer` does all of that.
+**Trade-off.** Using a single pre-formatted `text` field is simple and transparent, but it pushes all prompt-template responsibility onto us (`train/dataset.py`). The alternative — letting TRL apply a chat template from structured messages — is more automatic but hides formatting.
 
----
-
-## Main functionalities
-
-## 1. Read text from dataset
-
-Config:
-
-```yaml
-dataset_text_field: "text"
-```
-
-Meaning:
-
-> use the `text` column from the dataset as training input.
-
-Example dataset row:
-
-```python
-{
-  "text": "<|im_start|>user\nWrite a function...\n<|im_start|>assistant\ndef add(...)"
-}
-```
-
-Without this field, `SFTTrainer` would not know which column to train on.
+**In our repo.** We pre-format in `dataset.py`, so the field is just `text`. This keeps the template visible and version-controlled.
 
 ---
 
 ## 2. Tokenization
 
-`SFTTrainer` uses:
+**Mechanism.** `processing_class=tokenizer` supplies the tokenizer. Each `text` string becomes integer IDs plus an attention mask. The tokenizer also defines special tokens (`<|im_start|>`, EOS, PAD).
 
-```python
-processing_class=tokenizer
-```
+**Why it matters.** The model only understands token IDs. Tokenization quality directly affects sequence length (cost) and whether structure like newlines/indentation is preserved — critical for code.
 
-Example:
+**Trade-off.** A code-aware tokenizer (Qwen Coder's) represents code compactly, but it is fixed to the base model. You cannot swap tokenizers without breaking the embeddings.
 
-```python
-text = "<|im_start|>user\nWrite a function\n<|im_start|>assistant\ndef add(a,b): return a+b"
-tokens = tokenizer(text)
-```
-
-Result:
-
-```python
-{
-  "input_ids": [151644, 8948, 198, ...],
-  "attention_mask": [1, 1, 1, ...]
-}
-```
-
-This happens automatically for every sample.
+**In our repo.** We reuse Qwen2.5-Coder's tokenizer. We also set `pad_token = eos_token` when no pad token exists, so batching/padding has a valid pad id.
 
 ---
 
-## 3. Truncate long sequences
+## 3. Truncation (`max_length`)
 
-Config:
+**Mechanism.** Sequences longer than `max_length` are cut to that many tokens; the remainder is discarded.
 
-```yaml
-max_length: 1024
-```
+**Why it matters.** Attention cost scales roughly with sequence length (and memory with it), so a hard cap bounds per-step VRAM and time. It also guarantees fixed upper bounds for batching.
 
-If a sample is longer than 1024 tokens, it is cut.
+**Trade-off.** Too small → long examples get their answers chopped off, so the model learns truncated/incomplete code. Too large → wasted memory and slower steps when most samples are short.
 
-Example:
-
-```text
-very long prompt + very long answer = 1800 tokens
-```
-
-After truncation:
-
-```text
-first 1024 tokens kept
-rest discarded
-```
-
-This protects VRAM on small GPUs.
+**In our repo.** `max_seq_length: 2048`. The Python instruction dataset is mostly short (well under 2048), so truncation rarely fires, but the headroom covers longer multi-step answers. On a 4GB GPU we would drop this to 1024.
 
 ---
 
-## 4. Create batches
+## 4. Batching (`per_device_train_batch_size`)
 
-Config:
+**Mechanism.** N samples are stacked into one tensor of shape `[N, seq_len]` and processed in a single forward/backward pass per device.
 
-```yaml
-per_device_train_batch_size: 1
-per_device_eval_batch_size: 1
-```
+**Why it matters.** Larger batches use the GPU's parallelism better (higher utilization, fewer Python/kernel-launch overheads) and give a less noisy gradient estimate.
 
-Meaning:
+**Trade-off.** Memory grows roughly linearly with batch size. Very large batches can also *over-smooth* gradients and sometimes need a higher learning rate to converge at the same speed.
 
-> load 1 sample per GPU step.
-
-Example batch with batch size 1:
-
-```python
-input_ids = [[151644, 8948, 198, 2610, ...]]
-labels    = [[151644, 8948, 198, 2610, ...]]
-```
-
-If batch size were 2, two samples would be padded to the same length and stacked.
+**In our repo.** We raised this from 2 → **8** after observing only ~2.4GB VRAM used. At batch 8 we use ~4–5GB and ~95–100% GPU utilization, cutting wall-clock time substantially with no quality loss for this model size.
 
 ---
 
-## 5. Padding unequal sequences
+## 5. Padding
 
-If two samples have different lengths, the shorter one is padded.
+**Mechanism.** Within a batch, shorter sequences are padded with the pad token up to the longest sequence in that batch. The attention mask marks pad positions as 0 so they are ignored in attention and loss.
 
-Example:
+**Why it matters.** Tensors must be rectangular. Padding is what makes variable-length text batchable at all.
 
-```text
-sample A: 120 tokens
-sample B: 80 tokens
-```
+**Trade-off.** Padding is wasted compute: if one sample is 1900 tokens and the rest are 200, the whole batch runs at ~1900. Dynamic padding (pad to batch max, not global max) reduces this; packing (Section 17) eliminates most of it.
 
-After padding:
-
-```text
-sample A: 120 tokens
-sample B: 80 tokens + 40 pad tokens
-```
-
-Pad tokens are ignored by the attention mask.
+**In our repo.** We rely on standard dynamic padding and keep `packing: false` for simplicity. Because the dataset is fairly uniform in length, padding waste is modest.
 
 ---
 
-## 6. Causal language modeling loss
+## 6. The loss (causal LM, and the masking question)
 
-By default, `SFTTrainer` trains the model to predict the next token across the full text.
+**Mechanism.** Cross-entropy over next-token predictions. By default every token position contributes to the loss, including the user/prompt tokens.
 
-Example:
+**Why it matters.** This is the actual learning signal. *What* you compute loss over determines *what behavior* you reinforce.
 
-```text
-<|im_start|>user
-Write a function
-<|im_start|>assistant
-def add(a, b):
-    return a + b
-```
+**Trade-off — full-text vs answer-only:**
+- **Full-text (current default):** simpler; the model also learns to model prompts. Wastes capacity on reproducing instructions and can encourage prompt echoing. For a tiny 0.5B model, that wasted capacity is non-trivial.
+- **Answer-only (prompt tokens masked to `-100`):** focuses all gradient on the assistant response, usually better instruction-following and less echoing. Costs a bit more code to compute the prompt/response boundary.
 
-The model is trained to predict every next token in that sequence.
-
-Important:
-
-- this is the default behavior
-- we are **not** yet masking prompt tokens
-- so loss is applied to both user and assistant text
-
-If we later want answer-only training, we must add label masking.
+**In our repo.** We currently train **full-text** (no masking). This is a known, deliberate first-run simplification. Answer-only masking is the highest-value quality improvement we have queued.
 
 ---
 
 ## 7. PEFT / LoRA integration
 
-We pass:
+**Mechanism.** `get_peft_model` injects small low-rank matrices (A·B) into the targeted linear layers. The original weights are frozen; only A and B are trainable. The forward pass computes `W·x + (alpha/r)·B(A·x)`.
 
-```python
-peft_config=peft_config
-```
+**Why it matters.** It reduces trainable parameters by ~50–100×, which shrinks optimizer memory and checkpoint size and makes training feasible on small GPUs.
 
-Example LoRA config:
+**Trade-off.** LoRA has lower capacity than full fine-tuning. For large behavioral changes it can underfit; `r` and `target_modules` trade capacity against memory/speed. Adapters are also tied to the exact base model.
 
-```yaml
-r: 16
-lora_alpha: 32
-lora_dropout: 0.05
-target_modules:
-  - q_proj
-  - k_proj
-  - v_proj
-  - o_proj
-  - gate_proj
-  - up_proj
-  - down_proj
-```
-
-What happens:
-
-```text
-base model = frozen
-LoRA adapters = trainable
-```
-
-So when `trainer.train()` runs:
-
-- forward pass uses base model + LoRA
-- backward pass updates only LoRA weights
-
-This is how QLoRA training works in practice.
+**In our repo.** `r=16`, `alpha=32`, targeting all attention + MLP projections. The run reports **8.8M trainable / 502M total (1.75%)** — exactly the LoRA-only footprint we want. Important detail: after applying LoRA we cast trainable params to **fp32** so the optimizer/grad path is stable on Turing GPUs.
 
 ---
 
 ## 8. Gradient accumulation
 
-Config:
+**Mechanism.** Instead of updating weights every micro-batch, gradients are summed across `K` micro-batches and the optimizer steps once. Effective batch = `per_device_batch × K × num_devices`.
 
-```yaml
-per_device_train_batch_size: 1
-gradient_accumulation_steps: 8
-```
+**Why it matters.** It decouples the *statistical* batch size (what the optimizer sees) from the *physical* batch size (what fits in VRAM). This lets a small GPU emulate large-batch training.
 
-Meaning:
+**Trade-off.** It does not speed things up — `K` micro-batches still cost `K` forward/backward passes. It only saves memory versus a truly large physical batch. More accumulation also means fewer, larger optimizer steps per epoch.
 
-> simulate batch size 8 on a GPU that can only hold 1 sample.
-
-Example:
-
-```text
-step 1: process sample 1, accumulate gradients
-step 2: process sample 2, accumulate gradients
-...
-step 8: process sample 8, then optimizer update
-```
-
-Effective batch size:
-
-```text
-1 x 8 = 8
-```
-
-This is very useful on 4GB GPUs.
+**In our repo.** Now that batch 8 fits physically, we set `gradient_accumulation_steps: 1` (effective batch 8). Earlier, with batch 2, we used accumulation 4 to reach the same effective 8. Same statistics, different memory/speed profile.
 
 ---
 
-## 9. Optimizer and learning rate
+## 9. Optimizer, learning rate, warmup
 
-Config:
+**Mechanism.** `paged_adamw_8bit` is AdamW with 8-bit optimizer states and CUDA "paging" to spill state to CPU under pressure. Warmup linearly ramps LR from 0 to target over `warmup_ratio` of total steps, then (by default) decays.
 
-```yaml
-learning_rate: 2.0e-4
-optim: paged_adamw_8bit
-warmup_ratio: 0.03
-```
+**Why it matters.** AdamW state (two moments per parameter) is a major memory cost; 8-bit + paging slashes it. Warmup prevents early large, destabilizing updates when Adam's variance estimates are still noisy.
 
-Meaning:
+**Trade-off.** 8-bit optimizer states introduce tiny quantization noise (negligible in practice). Too-high LR diverges or spikes `grad_norm`; too-low LR wastes time. Warmup too short → early instability; too long → slow start.
 
-- optimizer updates LoRA weights after accumulated steps
-- learning rate controls step size
-- warmup slowly increases LR at the start
-
-Example:
-
-```text
-step 1-30: LR ramps up
-step 31+: LR stays around 2e-4
-```
-
-`paged_adamw_8bit` is chosen because it uses less memory.
+**In our repo.** `lr=2e-4` (standard LoRA range), `optim=paged_adamw_8bit`, `warmup_ratio=0.03`. Because only 1.75% of params train, a relatively high LR like 2e-4 is appropriate and stable — consistent with the healthy `grad_norm ≈ 2.4` we observed.
 
 ---
 
-## 10. Mixed precision training
+## 10. Mixed precision (and why we turned it off)
 
-Config:
+**Mechanism.** `fp16`/`bf16` run most matmuls in 16-bit. `fp16` additionally needs a **GradScaler** to prevent gradient underflow; `bf16` has wider exponent range and needs no scaler.
 
-```yaml
-fp16: true
-bf16: false
-```
+**Why it matters.** 16-bit math is faster and uses less memory than fp32.
 
-Meaning:
+**Trade-off.** `fp16` GradScaler only supports fp16/fp32 gradients — **not** bf16. `bf16` AMP requires Ampere+ hardware. On Turing (RTX 2080), bf16 kernels for the scaler path are not implemented, which produced our crash: `"_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'`.
 
-> do most math in 16-bit floats to save memory and speed up training.
-
-On many consumer GPUs:
-
-- `fp16` is used
-- on newer GPUs, `bf16` may be better
+**In our repo.** We set **`fp16: false`, `bf16: false`** and train the LoRA params in **fp32**. For a 0.5B model with a 4-bit frozen base, fp32 LoRA is cheap and removes the entire mixed-precision failure class. The startup log prints `Training precision: fp16=False, bf16=False` to confirm.
 
 ---
 
 ## 11. Gradient checkpointing
 
-Config:
+**Mechanism.** Normally all layer activations are stored for the backward pass. Checkpointing discards most activations on the forward pass and *recomputes* them during backward.
 
-```yaml
-gradient_checkpointing: true
-```
+**Why it matters.** Activation memory often dominates for long sequences/large batches. Checkpointing can cut it dramatically.
 
-Meaning:
+**Trade-off.** It adds ~20–30% compute (extra forward recomputation) for large memory savings. Pure win only when you are memory-bound.
 
-> trade compute for memory.
-
-Instead of storing all activations, the trainer recomputes some intermediate values during backward pass.
-
-Result:
-
-- lower VRAM use
-- slightly slower training
-
-This is important for small GPUs.
+**In our repo.** **Disabled** (`gradient_checkpointing: false`). The 0.5B model leaves plenty of VRAM headroom on 8GB, so we prefer speed. (On a 4GB GPU or a 1.5B model we would re-enable it.)
 
 ---
 
-## 12. Training epochs
+## 12. Epochs
 
-Config:
+**Mechanism.** `num_train_epochs` is how many full passes over the training set. Total optimizer steps ≈ `(samples / effective_batch) × epochs`.
 
-```yaml
-num_train_epochs: 1
-```
+**Why it matters.** Controls total exposure. Too few → underfitting; too many → overfitting/memorization, especially on small datasets.
 
-If train set has 2000 samples:
+**Trade-off.** More epochs cost proportional time and raise overfitting risk; the eval-loss curve is the signal for "enough."
 
-```text
-epoch 1 = model sees all 2000 samples once
-```
-
-If set to 3:
-
-```text
-epoch 1, epoch 2, epoch 3
-```
+**In our repo.** `num_train_epochs: 1` on ~17,100 training samples. One pass is a sensible first run; we decide on more epochs only after reading the eval curve.
 
 ---
 
 ## 13. Logging
 
-Config:
+**Mechanism.** Every `logging_steps` the trainer emits scalars: `loss`, `learning_rate`, `grad_norm`, `mean_token_accuracy`, `epoch`, throughput.
 
-```yaml
-logging_steps: 10
-report_to: "none"
-```
+**Why it matters.** This is your real-time health monitor. `loss` should trend down; `grad_norm` should stay bounded; `mean_token_accuracy` should rise.
 
-Every 10 steps, training prints metrics like:
+**Trade-off.** Very frequent logging adds minor overhead and noisy lines; too infrequent hides divergence until late.
 
-```text
-loss = 1.84
-learning_rate = 0.0002
-step = 100
-```
-
-`report_to: "none"` means no Weights & Biases / TensorBoard logging.
+**In our repo.** `logging_steps: 10`, `report_to: "none"` (console only, no W&B/TensorBoard). Our first lines showed `loss 1.648`, `grad_norm 2.44`, `mean_token_accuracy 0.69` — a healthy start.
 
 ---
 
 ## 14. Evaluation
 
-Config:
+**Mechanism.** When `eval_strategy="steps"`, every `eval_steps` the trainer runs the model over the held-out eval set (no grad) and reports eval loss.
 
-```yaml
-eval_strategy: "steps"
-eval_steps: 100
-```
+**Why it matters.** Train loss alone can drop while the model overfits. Eval loss on unseen data is the honest generalization signal.
 
-If `eval_dataset` exists, every 100 training steps:
+**Trade-off.** Evaluation pauses training and costs time proportional to eval-set size and frequency. Too frequent slows the run; too rare risks missing the overfitting point.
 
-```text
-run model on validation set
-compute eval loss
-```
-
-Example:
-
-```text
-train loss = 1.42
-eval loss  = 1.55
-```
-
-Lower eval loss usually means better generalization.
-
-In our pipeline, 5% of data is held out in `train/dataset.py`.
+**In our repo.** `eval_steps: 200` against the **900-sample** held-out split (5% carved out in `dataset.py`). Watch for eval loss flattening or rising while train loss keeps falling — that's the cue to stop or regularize.
 
 ---
 
-## 15. Checkpoint saving
+## 15. Checkpointing
 
-Config:
+**Mechanism.** Every `save_steps` the trainer writes a checkpoint (adapter weights, optimizer state, scheduler, RNG). `save_total_limit` prunes old ones.
 
-```yaml
-save_steps: 200
-save_total_limit: 2
-output_dir: outputs/tinycode-qlora
-```
+**Why it matters.** Crash recovery and the ability to pick an earlier, better-generalizing checkpoint after the fact.
 
-Meaning:
+**Trade-off.** Checkpoints cost disk and a brief I/O pause. Keeping many uses more disk; keeping too few risks losing the best one.
 
-- every 200 steps, save checkpoint
-- keep only the latest 2 checkpoints
-
-Example files:
-
-```text
-outputs/tinycode-qlora/checkpoint-200/
-outputs/tinycode-qlora/checkpoint-400/
-```
-
-At the end, we also save:
-
-```text
-outputs/tinycode-qlora/adapter/
-```
+**In our repo.** `save_steps: 400`, `save_total_limit: 2`, under `outputs/tinycode-qlora/`. At the end we also export the final adapter to `outputs/tinycode-qlora/adapter/`.
 
 ---
 
 ## 16. Reproducibility
 
-Config:
+**Mechanism.** `seed` fixes RNG for data shuffling, LoRA init, and dropout.
+
+**Why it matters.** Makes runs comparable — essential when tuning hyperparameters or writing up results for a paper.
+
+**Trade-off.** GPU kernels are not perfectly deterministic by default; identical seeds get you *close*, not bitwise-identical, unless you also force deterministic algorithms (slower).
+
+**In our repo.** `seed: 42`. Good enough to compare configs meaningfully without paying the determinism speed penalty.
+
+---
+
+## 17. Packing
+
+**Mechanism.** With `packing: true`, multiple short examples are concatenated into one `max_length` sequence, nearly eliminating padding.
+
+**Why it matters.** On datasets of many short samples, packing can raise effective throughput significantly (fewer wasted pad tokens).
+
+**Trade-off.** Naive packing lets one example "attend across" into the next unless boundary handling is correct, which can subtly blur examples. It also complicates per-example loss masking.
+
+**In our repo.** **Disabled** for a clean, easy-to-reason-about first run. A candidate optimization once correctness is locked in.
+
+---
+
+## A full optimizer step, concretely (current config)
 
 ```yaml
-seed: 42
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 1
+max_seq_length: 2048
+fp16: false
+bf16: false
 ```
-
-This helps make training more repeatable:
-
-- dataset shuffle
-- weight initialization randomness
-- some sampling behavior
-
-Not perfectly deterministic on GPU, but much more stable.
-
----
-
-## 17. Packing (disabled in our project)
-
-Config:
-
-```yaml
-packing: false
-```
-
-If `packing: true`, short examples can be concatenated into one long sequence to reduce padding waste.
-
-Example without packing:
 
 ```text
-sample A: 200 tokens + padding
-sample B: 800 tokens + padding
-```
-
-Example with packing:
-
-```text
-sample A + sample B combined into one 1000-token sequence
-```
-
-We disabled it for simplicity in the first run.
-
----
-
-## Concrete training step example
-
-Assume:
-
-```yaml
-per_device_train_batch_size: 1
-gradient_accumulation_steps: 8
-max_length: 1024
-```
-
-One optimizer update looks like this:
-
-```text
-1. load sample
-2. tokenize to <= 1024 tokens
-3. forward pass through 4-bit base model + LoRA
-4. compute loss
-5. backward pass
-6. accumulate gradients
-7. repeat 8 times
-8. optimizer step
-9. clear gradients
+1. pull 8 samples from the DataLoader
+2. tokenize + dynamic-pad to the batch's longest sequence (≤ 2048)
+3. forward: 4-bit frozen base + fp32 LoRA, causal mask, full-text labels
+4. cross-entropy loss over all non-pad tokens
+5. backward: grads only into fp32 LoRA params
+6. (accumulation = 1, so no waiting)
+7. paged_adamw_8bit updates LoRA weights
+8. scheduler advances LR; grads zeroed
+9. every 10 steps log; every 200 eval; every 400 checkpoint
 ```
 
 ---
 
-## What SFTTrainer does NOT do
+## What SFTTrainer does NOT do (and our current gaps)
 
-Important limitations in our current setup:
-
-### 1. It does not create the dataset format
-
-We must build the `text` column ourselves in `train/dataset.py`.
-
-### 2. It does not automatically do answer-only loss
-
-Right now, prompt tokens also contribute to loss.
-
-### 3. It does not export to GGUF
-
-After training, we still need a separate export step for Ollama.
-
-### 4. It does not choose the base model for us
-
-We choose:
-
-```yaml
-model:
-  name: Qwen/Qwen2.5-Coder-0.5B-Instruct
-```
-
-### 5. It does not guarantee good model quality
-
-Dataset quality matters more than trainer choice.
+1. **Format the data** — we own the chat template in `dataset.py`.
+2. **Answer-only masking** — not enabled; we currently train on prompt tokens too. (Top quality TODO.)
+3. **Export to GGUF** — a separate step is needed for Ollama/llama.cpp.
+4. **Pick the base model** — that's our config (`Qwen2.5-Coder-0.5B-Instruct`).
+5. **Guarantee quality** — data quality and objective design dominate; the trainer just executes faithfully.
 
 ---
 
-## Minimal mental model
+## Config → behavior cheat sheet
 
-Think of `SFTTrainer` as:
-
-```text
-dataset text
-  → tokenize
-  → batch
-  → model forward
-  → compute loss
-  → backward
-  → update LoRA
-  → log / eval / save
-```
-
-It is a training engine specialized for instruction/text fine-tuning.
-
----
-
-## Mapping config → behavior
-
-| Config field | What it controls |
-|---|---|
-| `dataset_text_field` | which dataset column to train on |
-| `max_length` | max tokens per sample |
-| `per_device_train_batch_size` | samples per step |
-| `gradient_accumulation_steps` | effective batch size multiplier |
-| `learning_rate` | update step size |
-| `num_train_epochs` | how many passes over dataset |
-| `fp16` | mixed precision |
-| `gradient_checkpointing` | memory saving |
-| `eval_strategy` | when to validate |
-| `save_steps` | when to checkpoint |
-| `packing` | combine short sequences |
+| Config field | Controls | Our value | Why |
+|---|---|---|---|
+| `dataset_text_field` | training column | `text` | pre-formatted in `dataset.py` |
+| `max_length` | tokens/sample cap | `2048` | covers long answers, fits 8GB |
+| `per_device_train_batch_size` | samples/step | `8` | uses ~half of 8GB, high util |
+| `gradient_accumulation_steps` | effective-batch multiplier | `1` | physical batch already large enough |
+| `learning_rate` | step size | `2e-4` | standard LoRA LR |
+| `num_train_epochs` | dataset passes | `1` | first-run baseline |
+| `fp16` / `bf16` | mixed precision | `false`/`false` | avoid Turing GradScaler crash |
+| `gradient_checkpointing` | memory vs compute | `false` | plenty of VRAM, prefer speed |
+| `eval_steps` | validation cadence | `200` | watch generalization |
+| `save_steps` / `save_total_limit` | checkpoint cadence/retention | `400` / `2` | recovery without disk bloat |
+| `packing` | concat short samples | `false` | simplicity first |
 
 ---
 
 ## Summary
 
-`SFTTrainer` is the component that turns our formatted coding dataset into actual weight updates for the LoRA adapter.
+`SFTTrainer` turns our formatted coding dataset into LoRA weight updates. The analytical takeaways:
 
-In this repo:
+- **Objective design** (full-text vs answer-only) matters more than most knobs for a tiny model.
+- **Precision** is hardware-coupled: Turing forces us off bf16, and fp32 LoRA is the safe, cheap choice here.
+- **Batch size and checkpointing** are memory/speed dials; with a 0.5B 4-bit base on 8GB we bias toward speed.
+- **Eval loss** is the metric that tells the truth about whether training is helping.
 
-1. `train/dataset.py` prepares `text`
-2. `train/train_qlora.py` loads model + LoRA + config
-3. `SFTTrainer` runs supervised fine-tuning
-4. output is a LoRA adapter in `outputs/tinycode-qlora/adapter/`
-
-That adapter is the trained "skill layer" on top of the frozen base model.
+Output: a LoRA adapter in `outputs/tinycode-qlora/adapter/` — the trained "skill layer" over the frozen 4-bit base.
