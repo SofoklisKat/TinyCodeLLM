@@ -25,9 +25,9 @@ lora:
 training:
   output_dir: outputs/tinycode-qlora
   num_train_epochs: 1
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 2
-  gradient_accumulation_steps: 4  # effective batch size = 8
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 1  # effective batch size = 8; fits ~5-6GB VRAM on RTX 2080
   learning_rate: 2.0e-4
   max_seq_length: 2048
   warmup_ratio: 0.03
