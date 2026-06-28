@@ -32,6 +32,27 @@ Output LoRA adapter:
 outputs/tinycode-qlora/adapter/
 ```
 
+## Test adapter
+
+Run default coding prompts against the trained adapter:
+
+```bash
+export CUDA_VISIBLE_DEVICES=0
+python3 -m train.test_adapter --config configs/train_qlora.yaml
+```
+
+Or:
+
+```bash
+bash scripts/test_adapter.sh
+```
+
+Single custom prompt:
+
+```bash
+python3 -m train.test_adapter --prompt "Write a Python function to sort a list of integers."
+```
+
 ## Default setup
 
 | Setting | Value |
@@ -51,7 +72,7 @@ Edit `configs/train_qlora.yaml` to change:
 
 ## GPU notes
 
-Default config targets **8GB VRAM** (`batch_size=2`, `max_seq_length=2048`).
+Default config targets **8GB VRAM** (`batch_size=8`, `max_seq_length=2048`).
 
 Use one GPU via `CUDA_VISIBLE_DEVICES`. On 4GB GPUs, reduce `max_seq_length` to `1024`, set `per_device_train_batch_size: 1`, and enable `gradient_checkpointing: true`.
 
@@ -61,6 +82,8 @@ Use one GPU via `CUDA_VISIBLE_DEVICES`. On 4GB GPUs, reduce `max_seq_length` to 
 configs/train_qlora.yaml   # hyperparameters
 train/dataset.py           # dataset loading + chat formatting
 train/train_qlora.py       # QLoRA training entrypoint
+train/test_adapter.py      # load adapter and run test prompts
 scripts/run_train.sh       # training launcher (no env setup)
+scripts/test_adapter.sh    # adapter test launcher
 outputs/                   # checkpoints (gitignored)
 ```
