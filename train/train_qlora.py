@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 import yaml
-from peft import LoraConfig, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -65,7 +65,7 @@ def main() -> None:
         model_cfg["name"],
         quantization_config=build_bnb_config(compute_dtype),
         device_map="auto",
-        torch_dtype=compute_dtype,
+        dtype=compute_dtype,
         trust_remote_code=model_cfg.get("trust_remote_code", False),
     )
     model = prepare_model_for_kbit_training(model)
@@ -79,6 +79,13 @@ def main() -> None:
         bias="none",
         task_type="CAUSAL_LM",
     )
+    model = get_peft_model(model, peft_config)
+    # fp16 AMP GradScaler does not support bf16 grads; keep trainable (LoRA)
+    # params in fp32 so unscaling works on Turing-class GPUs (e.g. RTX 2080).
+    for param in model.parameters():
+        if param.requires_grad:
+            param.data = param.data.float()
+    model.print_trainable_parameters()
 
     print(f"Loading dataset: {ds_cfg['name']}")
     train_ds, eval_ds = load_sft_dataset(
@@ -122,7 +129,6 @@ def main() -> None:
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         processing_class=tokenizer,
-        peft_config=peft_config,
     )
 
     print("Starting training...")
