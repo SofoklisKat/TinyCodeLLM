@@ -24,11 +24,11 @@ def load_config(path: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def build_bnb_config() -> BitsAndBytesConfig:
+def build_bnb_config(compute_dtype: torch.dtype = torch.float16) -> BitsAndBytesConfig:
     return BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_compute_dtype=compute_dtype,
         bnb_4bit_use_double_quant=True,
     )
 
@@ -60,10 +60,12 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    compute_dtype = torch.bfloat16 if train_cfg.get("bf16", False) else torch.float16
     model = AutoModelForCausalLM.from_pretrained(
         model_cfg["name"],
-        quantization_config=build_bnb_config(),
+        quantization_config=build_bnb_config(compute_dtype),
         device_map="auto",
+        torch_dtype=compute_dtype,
         trust_remote_code=model_cfg.get("trust_remote_code", False),
     )
     model = prepare_model_for_kbit_training(model)
