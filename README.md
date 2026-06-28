@@ -38,20 +38,22 @@ outputs/tinycode-qlora/adapter/
 |---------|-------|
 | Base model | `Qwen/Qwen2.5-Coder-0.5B-Instruct` |
 | Method | 4-bit QLoRA |
-| Dataset | `iamtarun/python_code_instructions_18k_alpaca` (2k samples for first run) |
-| VRAM target | ~4GB (works on GTX 1050 Ti class GPUs) |
+| Dataset | `iamtarun/python_code_instructions_18k_alpaca` (18k samples) |
+| VRAM target | 8GB (RTX 2080 class GPUs) |
 
 ## Config
 
 Edit `configs/train_qlora.yaml` to change:
 
 - `model.name` — e.g. `Qwen/Qwen2.5-Coder-1.5B-Instruct` if you have 8GB+ VRAM
-- `dataset.max_samples` — set to `18000` for full dataset after smoke test
+- `dataset.max_samples` — set to `500`–`2000` for a quick smoke test
 - `training.num_train_epochs`, `learning_rate`, `max_seq_length`
 
 ## GPU notes
 
-Use one GPU via `CUDA_VISIBLE_DEVICES`. For 1.5B models, use at least 8GB VRAM or reduce `max_seq_length` to 512.
+Default config targets **8GB VRAM** (`batch_size=2`, `max_seq_length=2048`).
+
+Use one GPU via `CUDA_VISIBLE_DEVICES`. On 4GB GPUs, reduce `max_seq_length` to `1024`, set `per_device_train_batch_size: 1`, and enable `gradient_checkpointing: true`.
 
 ## Project layout
 
