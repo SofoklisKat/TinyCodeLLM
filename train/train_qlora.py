@@ -92,6 +92,8 @@ def main() -> None:
     train_ds, eval_ds = load_sft_dataset(
         dataset_name=ds_cfg["name"],
         split=ds_cfg.get("split", "train"),
+        dataset_config=ds_cfg.get("config"),
+        eval_split=ds_cfg.get("eval_split"),
         max_samples=ds_cfg.get("max_samples"),
         validation_split=ds_cfg.get("validation_split", 0.05),
         seed=train_cfg.get("seed", 42),

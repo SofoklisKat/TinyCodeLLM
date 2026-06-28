@@ -1,0 +1,44 @@
+# QLoRA fine-tune on MBPP (train split) with public benchmark eval (test split)
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B-Instruct
+  trust_remote_code: false
+
+dataset:
+  name: google-research-datasets/mbpp
+  config: full
+  split: train
+  eval_split: test
+  max_samples: null
+  validation_split: 0
+
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+training:
+  output_dir: outputs/tinycode-qlora-mbpp
+  num_train_epochs: 3
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 1
+  learning_rate: 2.0e-4
+  max_seq_length: 2048
+  warmup_ratio: 0.03
+  logging_steps: 5
+  eval_steps: 20
+  save_steps: 40
+  save_total_limit: 2
+  bf16: false
+  fp16: false
+  gradient_checkpointing: false
+  optim: paged_adamw_8bit
+  seed: 42

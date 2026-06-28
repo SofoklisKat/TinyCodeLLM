@@ -17,6 +17,14 @@ Run QLoRA fine-tuning from the repo root:
 export CUDA_VISIBLE_DEVICES=0
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+python3 -m train.train_qlora --config configs/train_qlora_mbpp.yaml
+```
+
+MBPP training uses the official **train** split and evaluates on the **test** split (no random holdout).
+
+Or use the previous Alpaca dataset:
+
+```bash
 python3 -m train.train_qlora --config configs/train_qlora.yaml
 ```
 
@@ -91,7 +99,7 @@ Requirements:
 |---------|-------|
 | Base model | `Qwen/Qwen2.5-Coder-0.5B-Instruct` |
 | Method | 4-bit QLoRA |
-| Dataset | `iamtarun/python_code_instructions_18k_alpaca` (18k samples) |
+| Dataset | `google-research-datasets/mbpp` (train split, eval on test) |
 | VRAM target | 8GB (RTX 2080 class GPUs) |
 
 ## Config
@@ -111,7 +119,8 @@ Use one GPU via `CUDA_VISIBLE_DEVICES`. On 4GB GPUs, reduce `max_seq_length` to 
 ## Project layout
 
 ```
-configs/train_qlora.yaml   # hyperparameters
+configs/train_qlora_mbpp.yaml  # MBPP train/test (recommended)
+configs/train_qlora.yaml       # Alpaca instruction dataset
 train/dataset.py           # dataset loading + chat formatting
 train/train_qlora.py       # QLoRA training entrypoint
 train/test_adapter.py      # load adapter and run test prompts
