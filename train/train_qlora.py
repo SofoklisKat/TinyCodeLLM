@@ -60,7 +60,8 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    compute_dtype = torch.bfloat16 if train_cfg.get("bf16", False) else torch.float16
+    # 4-bit matmul uses fp16; training runs in fp32 (no AMP GradScaler).
+    compute_dtype = torch.float16
     model = AutoModelForCausalLM.from_pretrained(
         model_cfg["name"],
         quantization_config=build_bnb_config(compute_dtype),
@@ -99,6 +100,10 @@ def main() -> None:
     if eval_ds is not None:
         print(f"Eval samples: {len(eval_ds)}")
 
+    use_bf16 = bool(train_cfg.get("bf16", False))
+    use_fp16 = bool(train_cfg.get("fp16", False))
+    print(f"Training precision: fp16={use_fp16}, bf16={use_bf16}")
+
     training_args = SFTConfig(
         output_dir=str(output_dir),
         num_train_epochs=train_cfg["num_train_epochs"],
@@ -112,8 +117,8 @@ def main() -> None:
         eval_steps=train_cfg.get("eval_steps", 100) if eval_ds is not None else None,
         save_steps=train_cfg.get("save_steps", 200),
         save_total_limit=train_cfg.get("save_total_limit", 2),
-        bf16=train_cfg.get("bf16", False),
-        fp16=train_cfg.get("fp16", True),
+        bf16=use_bf16,
+        fp16=use_fp16,
         gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
         optim=train_cfg.get("optim", "paged_adamw_8bit"),
         report_to="none",

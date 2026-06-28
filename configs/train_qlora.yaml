@@ -36,7 +36,7 @@ training:
   save_steps: 400
   save_total_limit: 2
   bf16: false
-  fp16: true
+  fp16: false  # RTX 2080 (Turing): no bf16 AMP; fp32 LoRA training avoids GradScaler crash
   gradient_checkpointing: false  # 0.5B fits on 8GB; disable for faster training
   optim: paged_adamw_8bit
   seed: 42
