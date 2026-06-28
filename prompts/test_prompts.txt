@@ -1,0 +1,10 @@
+Write a Python function to reverse a string.
+---
+Write a Python function to check if a number is prime.
+---
+Write a Python function that returns the nth Fibonacci number.
+---
+Fix this Python function so it handles empty lists:
+
+def average(nums):
+    return sum(nums) / len(nums)

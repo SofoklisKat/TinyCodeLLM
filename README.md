@@ -53,6 +53,38 @@ Single custom prompt:
 python3 -m train.test_adapter --prompt "Write a Python function to sort a list of integers."
 ```
 
+Multiple prompts on the command line:
+
+```bash
+python3 -m train.test_adapter \
+  --prompt "Write a Python function to reverse a string." \
+  --prompt "Write a Python function to check if a number is prime."
+```
+
+Many prompts from a file (`prompts/test_prompts.txt`):
+
+```text
+Write a Python function to reverse a string.
+---
+Write a Python function to check if a number is prime.
+---
+Fix this Python function:
+
+def average(nums):
+    return sum(nums) / len(nums)
+```
+
+Run:
+
+```bash
+python3 -m train.test_adapter --prompts-file prompts/test_prompts.txt
+```
+
+Requirements:
+- trained adapter at `outputs/tinycode-qlora/adapter/`
+- same Python environment with `requirements.txt` installed
+- GPU optional but recommended (`CUDA_VISIBLE_DEVICES=0`)
+
 ## Default setup
 
 | Setting | Value |

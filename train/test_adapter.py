@@ -24,6 +24,28 @@ def load_config(path: Path) -> dict:
         return yaml.safe_load(f)
 
 
+def load_prompts_file(path: Path) -> list[str]:
+    """Load prompts from a text file. Separate prompts with a line containing only ---."""
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return []
+    parts = [part.strip() for part in text.split("\n---\n")]
+    return [part for part in parts if part]
+
+
+def resolve_prompts(prompt_args: list[str] | None, prompts_file: Path | None) -> list[str]:
+    if prompts_file is not None:
+        if not prompts_file.exists():
+            raise FileNotFoundError(f"Prompts file not found: {prompts_file}")
+        prompts = load_prompts_file(prompts_file)
+        if not prompts:
+            raise ValueError(f"No prompts found in {prompts_file}")
+        return prompts
+    if prompt_args:
+        return prompt_args
+    return DEFAULT_PROMPTS
+
+
 def build_prompt(user_text: str) -> str:
     return f"<|im_start|>user\n{user_text.strip()}\n<|im_start|>assistant\n"
 
@@ -94,9 +116,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--prompt",
-        type=str,
+        action="append",
         default=None,
-        help="Single custom prompt to test",
+        help="Prompt to test; pass multiple times for several prompts",
+    )
+    parser.add_argument(
+        "--prompts-file",
+        type=Path,
+        default=None,
+        help="Text file with prompts separated by a line containing only ---",
     )
     parser.add_argument(
         "--max-new-tokens",
@@ -120,7 +148,7 @@ def main() -> None:
     if not adapter_path.exists():
         raise FileNotFoundError(f"Adapter not found: {adapter_path}")
 
-    prompts = [args.prompt] if args.prompt else DEFAULT_PROMPTS
+    prompts = resolve_prompts(args.prompt, args.prompts_file)
 
     print(f"Base model: {model_cfg['name']}")
     print(f"Adapter: {adapter_path}")
