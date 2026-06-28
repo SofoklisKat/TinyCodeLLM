@@ -1,6 +1,11 @@
 import unittest
 
-from eval.run_mbpp import build_prompt, extract_code, run_candidate_tests
+from eval.run_mbpp import (
+    build_mbpp_instruction,
+    build_prompt,
+    extract_code,
+    run_candidate_tests,
+)
 
 
 class MbppEvalTests(unittest.TestCase):
@@ -10,6 +15,19 @@ class MbppEvalTests(unittest.TestCase):
         self.assertIn("<|im_start|>user", prompt)
         self.assertIn("Write a function to add two numbers.", prompt)
         self.assertTrue(prompt.endswith("<|im_start|>assistant\n"))
+
+    def test_build_mbpp_instruction_includes_tests_for_signature(self):
+        instruction = build_mbpp_instruction(
+            problem_text="Write a function to remove first and last occurrence of a given character.",
+            test_list=[
+                "assert remove_Occ('hello','l') == 'heo'",
+                "assert remove_Occ('abcda','a') == 'bcd'",
+            ],
+        )
+
+        self.assertIn("remove first and last occurrence", instruction)
+        self.assertIn("assert remove_Occ('hello','l') == 'heo'", instruction)
+        self.assertIn("remove_Occ", instruction)
 
     def test_extract_code_removes_markdown_fence(self):
         generated = "```python\ndef add(a, b):\n    return a + b\n```"

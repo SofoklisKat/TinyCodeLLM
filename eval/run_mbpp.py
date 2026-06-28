@@ -40,6 +40,17 @@ def build_prompt(problem_prompt: str) -> str:
     return f"<|im_start|>user\n{problem_prompt.strip()}\n<|im_start|>assistant\n"
 
 
+def build_mbpp_instruction(problem_text: str, test_list: list[str]) -> str:
+    """Standard MBPP instruction: problem plus tests so the model sees the
+    required function name and signature."""
+    tests = "\n".join(test.strip() for test in test_list if test.strip())
+    return (
+        f"You are an expert Python programmer. Write a Python function for the "
+        f"following task:\n{problem_text.strip()}\n\n"
+        f"Your code should pass these tests:\n{tests}"
+    )
+
+
 def extract_code(generated_text: str) -> str:
     """Extract Python code from a model response."""
     fence = re.search(r"```(?:python)?\s*(.*?)```", generated_text, flags=re.DOTALL)
@@ -171,10 +182,11 @@ def evaluate_mbpp(
 
     records: list[EvalRecord] = []
     for index, example in enumerate(dataset, start=1):
+        instruction = build_mbpp_instruction(example["text"], example["test_list"])
         generated, code = generate_code(
             model=model,
             tokenizer=tokenizer,
-            prompt=example["text"],
+            prompt=instruction,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
         )
@@ -186,7 +198,7 @@ def evaluate_mbpp(
         )
         record = EvalRecord(
             task_id=int(example["task_id"]),
-            prompt=example["text"],
+            prompt=instruction,
             generated=generated,
             code=code,
             passed=result.passed,
