@@ -2,6 +2,92 @@
 
 Train a small code LLM that runs efficiently on consumer GPUs (4–8GB VRAM) for coding suggestions.
 
+## Benchmark results
+
+Public scores from the literature (`docs/papers/`). Use these as baselines for TinyCodeLLM.
+
+### Our base model: `Qwen/Qwen2.5-Coder-0.5B-Instruct`
+
+Source: [Qwen2.5-Coder Technical Report](docs/papers/qwen2_5_coder_technical_report.pdf) (EvalPlus, instruct models).
+
+| Model | HE | HE+ | MBPP | MBPP+ | BigCodeBench Full | LiveCodeBench |
+|-------|---:|----:|-----:|------:|------------------:|--------------:|
+| **Qwen2.5-Coder-0.5B-Instruct** (base) | 61.6 | 57.3 | 52.4 | 43.7 | 11.1 | 2.0 |
+| Qwen2.5-Coder-1.5B-Instruct | 70.7 | 66.5 | 69.2 | 59.4 | 32.5 | 6.1 |
+| Qwen2.5-Coder-3B-Instruct | 84.1 | 80.5 | 73.6 | 62.4 | 35.8 | 10.8 |
+| Qwen2.5-Coder-7B-Instruct | 88.4 | 84.1 | 83.5 | 71.7 | 41.0 | 18.2 |
+| **TinyCodeLLM** (ours, TBD) | — | — | — | — | — | — |
+
+**HE** = HumanEval pass@1, **HE+** = HumanEval+ pass@1, **MBPP+** = MBPP+ pass@1.
+
+### Our training runs
+
+These are trainer metrics from our local QLoRA runs. They are useful for tracking convergence, but they are **not** pass@1 benchmark scores. Pass@1 requires executing generated code against benchmark tests.
+
+| Run | Dataset | Epochs | Train loss | Eval loss | Eval token accuracy | Runtime | Adapter |
+|-----|---------|-------:|-----------:|----------:|--------------------:|--------:|---------|
+| MBPP QLoRA | `google-research-datasets/mbpp` (`train` → `test`) | 3 | 0.8173 | 0.9359 | 0.7768 | 207.5s | `outputs/tinycode-qlora-mbpp/adapter/` |
+
+MBPP run details:
+
+| Metric | Value |
+|--------|------:|
+| Eval runtime | 14.43s |
+| Eval samples/sec | 34.65 |
+| Eval steps/sec | 8.663 |
+| Eval entropy | 0.6815 |
+| Eval tokens | 89,670 |
+| Train samples/sec | 5.408 |
+| Train steps/sec | 0.68 |
+
+### Same-size base (pre-instruct) model
+
+Source: [Qwen2.5-Coder Technical Report](docs/papers/qwen2_5_coder_technical_report.pdf) (base models).
+
+| Model | HE | HE+ | MBPP | MBPP+ |
+|-------|---:|----:|-----:|------:|
+| Qwen2.5-Coder-0.5B (base) | 28.0 | 23.8 | 52.9 | 47.1 |
+
+### MBPP dataset (training benchmark)
+
+Source: [Program Synthesis with Large Language Models](docs/papers/mbpp_program_synthesis.pdf).
+
+| Split | Problems | Use |
+|-------|----------|-----|
+| Train | ~374 | fine-tuning (`configs/train_qlora_mbpp.yaml`) |
+| Test | ~500 | public benchmark evaluation |
+| Total | 974 | Mostly Basic Python Problems |
+
+Do **not** train on the MBPP test split if you want a valid benchmark score.
+
+### Publishability targets (0.5B)
+
+Reasonable first research goal:
+
+| Benchmark | Base (0.5B-Instruct) | Target for TinyCodeLLM |
+|-----------|---------------------:|-----------------------:|
+| HumanEval+ | 57.3 | **60+** |
+| MBPP+ | 43.7 | **48+** |
+| MBPP | 52.4 | **58+** |
+
+Stronger claim: beat base by **≥3 points** on at least two benchmarks while staying under **8GB VRAM**.
+
+### Reference papers
+
+Local copies in `docs/papers/`:
+
+| Topic | Paper |
+|-------|-------|
+| Base model scores | `qwen2_5_coder_technical_report.pdf` |
+| HumanEval benchmark | `humaneval_codex.pdf` |
+| MBPP benchmark | `mbpp_program_synthesis.pdf` |
+| Stricter tests | `evalplus.pdf` |
+| Complex code tasks | `bigcodebench.pdf` |
+| Newer OOD tasks | `livecodebench.pdf` |
+| Small model study | `small_language_models_code_generation_empirical_study.pdf` |
+
+Full list: `docs/papers/README.md`
+
 ## Quick start (training)
 
 Install dependencies in your own Python environment (outside this repo):
@@ -37,7 +123,8 @@ bash scripts/run_train.sh
 Output LoRA adapter:
 
 ```
-outputs/tinycode-qlora/adapter/
+outputs/tinycode-qlora-mbpp/adapter/   # MBPP training
+outputs/tinycode-qlora/adapter/        # Alpaca training
 ```
 
 ## Test adapter
@@ -46,7 +133,7 @@ Run default coding prompts against the trained adapter:
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0
-python3 -m train.test_adapter --config configs/train_qlora.yaml
+python3 -m train.test_adapter --config configs/train_qlora_mbpp.yaml
 ```
 
 Or:
@@ -93,6 +180,50 @@ Requirements:
 - same Python environment with `requirements.txt` installed
 - GPU optional but recommended (`CUDA_VISIBLE_DEVICES=0`)
 
+## Evaluate MBPP pass@1
+
+Run a quick smoke test on 10 MBPP test examples:
+
+```bash
+export CUDA_VISIBLE_DEVICES=0
+python3 -m eval.run_mbpp \
+  --config configs/train_qlora_mbpp.yaml \
+  --limit 10 \
+  --output outputs/eval/mbpp_tinycode_smoke.jsonl
+```
+
+Run full MBPP test evaluation:
+
+```bash
+python3 -m eval.run_mbpp \
+  --config configs/train_qlora_mbpp.yaml \
+  --output outputs/eval/mbpp_tinycode.jsonl
+```
+
+Compare against the base model without the LoRA adapter:
+
+```bash
+python3 -m eval.run_mbpp \
+  --config configs/train_qlora_mbpp.yaml \
+  --base-only \
+  --output outputs/eval/mbpp_base.jsonl
+```
+
+Or use the helper:
+
+```bash
+bash scripts/run_mbpp_eval.sh --config configs/train_qlora_mbpp.yaml --limit 10
+```
+
+The evaluator reports:
+
+- number of examples
+- number passed
+- `pass@1`
+- JSONL records with generated code and errors
+
+Evaluation executes model-generated code with a timeout. Run it only in an environment where executing benchmark code is acceptable.
+
 ## Default setup
 
 | Setting | Value |
@@ -104,7 +235,7 @@ Requirements:
 
 ## Config
 
-Edit `configs/train_qlora.yaml` to change:
+Edit `configs/train_qlora_mbpp.yaml` or `configs/train_qlora.yaml` to change:
 
 - `model.name` — e.g. `Qwen/Qwen2.5-Coder-1.5B-Instruct` if you have 8GB+ VRAM
 - `dataset.max_samples` — set to `500`–`2000` for a quick smoke test
@@ -126,5 +257,6 @@ train/train_qlora.py       # QLoRA training entrypoint
 train/test_adapter.py      # load adapter and run test prompts
 scripts/run_train.sh       # training launcher (no env setup)
 scripts/test_adapter.sh    # adapter test launcher
+scripts/run_mbpp_eval.sh   # MBPP pass@1 evaluator launcher
 outputs/                   # checkpoints (gitignored)
 ```
