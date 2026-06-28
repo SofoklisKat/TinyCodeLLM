@@ -1,0 +1,43 @@
+# QLoRA fine-tune for TinyCodeLLM (tuned for ~4-8GB VRAM)
+model:
+  name: Qwen/Qwen2.5-Coder-0.5B-Instruct
+  trust_remote_code: false
+
+dataset:
+  # Small instruct coding dataset for a first training run
+  name: iamtarun/python_code_instructions_18k_alpaca
+  split: train
+  max_samples: 2000  # increase after smoke test (e.g. 18000)
+  validation_split: 0.05
+
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+training:
+  output_dir: outputs/tinycode-qlora
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 2.0e-4
+  max_seq_length: 1024
+  warmup_ratio: 0.03
+  logging_steps: 10
+  eval_steps: 100
+  save_steps: 200
+  save_total_limit: 2
+  bf16: false
+  fp16: true
+  gradient_checkpointing: true
+  optim: paged_adamw_8bit
+  seed: 42
