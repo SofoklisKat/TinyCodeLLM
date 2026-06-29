@@ -20,6 +20,17 @@ Source: [Qwen2.5-Coder Technical Report](docs/papers/qwen2_5_coder_technical_rep
 
 **HE** = HumanEval pass@1, **HE+** = HumanEval+ pass@1, **MBPP+** = MBPP+ pass@1.
 
+### Local MBPP pass@1
+
+These scores use our local evaluator (`eval/run_mbpp.py`) on the MBPP `test` split with greedy decoding (`temperature=0`). They are directly comparable to each other, but not necessarily identical to the Qwen paper's official evaluation setup.
+
+| Model | Adapter | Passed | Examples | Local MBPP pass@1 |
+|-------|---------|-------:|---------:|------------------:|
+| Qwen2.5-Coder-0.5B-Instruct | none | 124 | 500 | 0.2480 |
+| TinyCodeLLM MBPP QLoRA | `outputs/tinycode-qlora-mbpp/adapter/` | 185 | 500 | 0.3700 |
+
+Local improvement over the base model: **+12.2 absolute points** (`0.3700 - 0.2480`), or about **+49% relative** (`0.3700 / 0.2480 - 1`).
+
 ### Our training runs
 
 These are trainer metrics from our local QLoRA runs. They are useful for tracking convergence, but they are **not** pass@1 benchmark scores. Pass@1 requires executing generated code against benchmark tests.
