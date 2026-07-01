@@ -36,6 +36,18 @@ def load_config(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def print_eval_model_spec(
+    cfg: dict[str, Any],
+    adapter_path: Path | None,
+    *,
+    base_only: bool,
+) -> None:
+    from train.model_info import print_model_spec
+
+    mode = "evaluation (base model only)" if base_only else "evaluation (base + LoRA adapter)"
+    print_model_spec(cfg, adapter_path, mode=mode)
+
+
 def build_prompt(problem_prompt: str) -> str:
     return f"<|im_start|>user\n{problem_prompt.strip()}\n<|im_start|>assistant\n"
 
@@ -236,8 +248,7 @@ def main() -> None:
         if not adapter_path.exists():
             raise FileNotFoundError(f"Adapter not found: {adapter_path}")
 
-    print(f"Base model: {model_cfg['name']}")
-    print(f"Adapter: {adapter_path if adapter_path else 'none (base-only)'}")
+    print_eval_model_spec(cfg, adapter_path, base_only=args.base_only)
     print(f"Dataset: google-research-datasets/mbpp ({args.dataset_config}, split={args.split})")
 
     model, tokenizer = load_model(

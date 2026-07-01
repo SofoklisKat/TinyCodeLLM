@@ -1,0 +1,24 @@
+# Smaller/faster smoke test for scratch pretraining (~minutes, not hours)
+model:
+  output_dir: outputs/tinycode-30m-smoke
+  tokenizer: gpt2
+
+dataset:
+  name: wikitext
+  config: wikitext-2-raw-v1
+  split: train
+  text_column: text
+  max_samples: 500
+
+training:
+  block_size: 256
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 2
+  num_train_epochs: 1
+  learning_rate: 3.0e-4
+  weight_decay: 0.01
+  logging_steps: 10
+  save_steps: 50
+  max_steps: 100
+  fp16: true
+  seed: 42

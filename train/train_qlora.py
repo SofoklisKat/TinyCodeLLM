@@ -17,6 +17,7 @@ from transformers import (
 from trl import SFTConfig, SFTTrainer
 
 from train.dataset import load_sft_dataset
+from train.model_info import print_model_spec
 
 
 def load_config(path: Path) -> dict:
@@ -52,6 +53,7 @@ def main() -> None:
     output_dir = Path(train_cfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    print_model_spec(cfg, output_dir / "adapter", mode="training")
     print(f"Loading model: {model_cfg['name']}")
     tokenizer = AutoTokenizer.from_pretrained(
         model_cfg["name"],

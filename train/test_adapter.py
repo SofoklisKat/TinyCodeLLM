@@ -11,6 +11,8 @@ import yaml
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from train.model_info import print_model_spec
+
 DEFAULT_PROMPTS = [
     "Write a Python function to reverse a string.",
     "Write a Python function to check if a number is prime.",
@@ -150,8 +152,7 @@ def main() -> None:
 
     prompts = resolve_prompts(args.prompt, args.prompts_file)
 
-    print(f"Base model: {model_cfg['name']}")
-    print(f"Adapter: {adapter_path}")
+    print_model_spec(cfg, adapter_path, mode="inference")
     model, tokenizer = load_model(
         base_model=model_cfg["name"],
         adapter_path=adapter_path,

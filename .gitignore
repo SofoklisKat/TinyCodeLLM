@@ -135,7 +135,7 @@ celerybeat.pid
 *.rdb
 *.aof
 *.pid
-
+*.pdf
 # RabbitMQ
 mnesia/
 rabbitmq/
@@ -224,3 +224,12 @@ wandb/
 *.bin
 *.safetensors
 !configs/**
+
+# Downloaded / preprocessed datasets (created by train_scratch.py)
+**/dataset-cache/
+hf_cache/
+huggingface_cache/
+hf_datasets/
+data/raw/
+data/processed/
+downloads/datasets/
