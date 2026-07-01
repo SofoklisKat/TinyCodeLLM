@@ -4,7 +4,9 @@ model:
   tokenizer: gpt2
 
 dataset:
+  # Requires datasets<4.0 (loading script). See requirements.txt.
   name: codeparrot/github-code
+  trust_remote_code: true
   languages:
     - Python
   split: train

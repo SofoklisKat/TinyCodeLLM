@@ -8,15 +8,17 @@ from datasets import Dataset, load_dataset
 from transformers import PreTrainedTokenizerBase
 
 
-def _load_text_dataset(
+def _load_raw_dataset(
     dataset_name: str,
     split: str,
     dataset_config: str | None,
     languages: list[str] | None,
-    text_column: str,
-    max_samples: int | None,
-    seed: int,
+    trust_remote_code: bool,
 ) -> Dataset:
+    load_kwargs: dict[str, Any] = {}
+    if trust_remote_code:
+        load_kwargs["trust_remote_code"] = True
+
     name = dataset_name.lower()
 
     if "github-code" in name:
@@ -25,17 +27,43 @@ def _load_text_dataset(
                 f"Downloading {dataset_name} ({', '.join(languages)} only). "
                 "Full Python subset is ~7.2M files / ~52 GB."
             )
-            raw = load_dataset(dataset_name, languages=languages, split=split)
+            raw = load_dataset(
+                dataset_name,
+                languages=languages,
+                split=split,
+                **load_kwargs,
+            )
         else:
             print(
                 f"Downloading {dataset_name} (all languages). "
                 "Full dataset is ~115M files / ~324 GB compressed."
             )
-            raw = load_dataset(dataset_name, split=split)
+            raw = load_dataset(dataset_name, split=split, **load_kwargs)
     elif dataset_config:
-        raw = load_dataset(dataset_name, dataset_config, split=split)
+        raw = load_dataset(dataset_name, dataset_config, split=split, **load_kwargs)
     else:
-        raw = load_dataset(dataset_name, split=split)
+        raw = load_dataset(dataset_name, split=split, **load_kwargs)
+
+    return raw
+
+
+def _load_text_dataset(
+    dataset_name: str,
+    split: str,
+    dataset_config: str | None,
+    languages: list[str] | None,
+    text_column: str,
+    max_samples: int | None,
+    seed: int,
+    trust_remote_code: bool = False,
+) -> Dataset:
+    raw = _load_raw_dataset(
+        dataset_name=dataset_name,
+        split=split,
+        dataset_config=dataset_config,
+        languages=languages,
+        trust_remote_code=trust_remote_code,
+    )
 
     print(f"Loaded {len(raw):,} raw examples from {dataset_name}")
 
@@ -118,6 +146,7 @@ def load_clm_dataset(
     seed: int = 42,
     cache_dir: str | None = None,
     num_proc: int = 1,
+    trust_remote_code: bool = False,
 ) -> Dataset:
     """Return a tokenized dataset ready for causal LM training."""
     from pathlib import Path
@@ -140,6 +169,7 @@ def load_clm_dataset(
         text_column=text_column,
         max_samples=max_samples,
         seed=seed,
+        trust_remote_code=trust_remote_code,
     )
     processed = tokenize_and_chunk(text_ds, tokenizer, block_size, num_proc=num_proc)
     print(f"Training blocks after tokenization: {len(processed):,}")

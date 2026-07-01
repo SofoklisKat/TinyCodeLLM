@@ -93,6 +93,7 @@ def main() -> None:
         seed=train_cfg.get("seed", 42),
         cache_dir=ds_cfg.get("cache_dir"),
         num_proc=int(train_cfg.get("preprocessing_num_proc", 1)),
+        trust_remote_code=bool(ds_cfg.get("trust_remote_code", False)),
     )
     if len(dataset) == 0:
         raise RuntimeError("No training blocks were produced. Increase max_samples or block_size.")
