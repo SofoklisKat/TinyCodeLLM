@@ -11,18 +11,17 @@ Example:
 from __future__ import annotations
 
 import argparse
-import math
+import shutil
 import time
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 import yaml
-from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
 from train.model import count_parameters, export_to_huggingface, tinycode_30m
-from train.scratch_dataset import load_clm_dataset
+from train.scratch_dataset import build_training_dataloader
 
 
 def load_config(path: Path) -> dict:
@@ -75,15 +74,24 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    free_gb = shutil.disk_usage(output_dir).free / (1024**3)
+    print(f"Free disk space at output_dir: {free_gb:.1f} GB")
+    if not ds_cfg.get("streaming", False) and free_gb < 120:
+        print(
+            "Warning: full download + dataset-cache for Python github-code often needs "
+            "~100-120 GB. Set dataset.streaming: true in the config to avoid that."
+        )
+
     tokenizer_name = model_cfg.get("tokenizer", "gpt2")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     print(f"Loading dataset: {ds_cfg['name']}")
-    dataset = load_clm_dataset(
+    dataloader = build_training_dataloader(
         dataset_name=ds_cfg["name"],
         tokenizer=tokenizer,
+        batch_size=train_cfg["per_device_train_batch_size"],
         split=ds_cfg.get("split", "train"),
         dataset_config=ds_cfg.get("config"),
         languages=ds_cfg.get("languages"),
@@ -94,17 +102,8 @@ def main() -> None:
         cache_dir=ds_cfg.get("cache_dir"),
         num_proc=int(train_cfg.get("preprocessing_num_proc", 1)),
         trust_remote_code=bool(ds_cfg.get("trust_remote_code", False)),
-    )
-    if len(dataset) == 0:
-        raise RuntimeError("No training blocks were produced. Increase max_samples or block_size.")
-
-    print(f"Training blocks: {len(dataset)}")
-    dataloader = DataLoader(
-        dataset,
-        batch_size=train_cfg["per_device_train_batch_size"],
-        shuffle=True,
+        streaming=bool(ds_cfg.get("streaming", False)),
         collate_fn=collate_batch,
-        drop_last=True,
     )
 
     model = tinycode_30m()
