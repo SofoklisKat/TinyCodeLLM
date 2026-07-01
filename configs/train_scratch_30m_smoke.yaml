@@ -4,7 +4,7 @@ model:
   tokenizer: gpt2
 
 dataset:
-  name: wikitext
+  name: Salesforce/wikitext
   config: wikitext-2-raw-v1
   split: train
   text_column: text
