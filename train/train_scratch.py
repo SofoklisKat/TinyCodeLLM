@@ -29,6 +29,43 @@ def load_config(path: Path) -> dict:
         return yaml.safe_load(f)
 
 
+def forward_logits(model, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+    output = model(input_ids, attention_mask=attention_mask)
+    return output.logits if hasattr(output, "logits") else output
+
+
+def parse_resume_step(resume_path: Path) -> int:
+    name = resume_path.name
+    if name.startswith("checkpoint-"):
+        return int(name.split("-", maxsplit=1)[1])
+    return 0
+
+
+def load_model_for_training(
+    device: torch.device,
+    resume_from: Path | None,
+):
+    if resume_from is None:
+        model = tinycode_30m()
+        model.to(device)
+        start_step = 0
+        print(f"Parameters: {count_parameters(model):,}")
+        return model, start_step
+
+    if not resume_from.is_dir():
+        raise FileNotFoundError(f"Resume checkpoint not found: {resume_from}")
+
+    from transformers import AutoModelForCausalLM
+
+    print(f"Resuming weights from: {resume_from}")
+    model = AutoModelForCausalLM.from_pretrained(resume_from)
+    model.to(device)
+    start_step = parse_resume_step(resume_from)
+    print(f"Resuming from step: {start_step}")
+    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    return model, start_step
+
+
 def causal_lm_loss(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     shift_logits = logits[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous()
@@ -61,6 +98,12 @@ def main() -> None:
         type=Path,
         default=Path("configs/train_scratch_30m.yaml"),
     )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        default=None,
+        help="Checkpoint directory to resume from (e.g. outputs/tinycode-30m/checkpoint-185000)",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -83,7 +126,14 @@ def main() -> None:
         )
 
     tokenizer_name = model_cfg.get("tokenizer", "gpt2")
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    resume_from = args.resume
+    if resume_from is None and train_cfg.get("resume_from"):
+        resume_from = Path(train_cfg["resume_from"])
+
+    if resume_from is not None:
+        tokenizer = AutoTokenizer.from_pretrained(resume_from)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -106,10 +156,7 @@ def main() -> None:
         collate_fn=collate_batch,
     )
 
-    model = tinycode_30m()
-    model.to(device)
-    print(model)
-    print(f"Parameters: {count_parameters(model):,}")
+    model, start_step = load_model_for_training(device, resume_from)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -127,10 +174,16 @@ def main() -> None:
     if max_steps is not None:
         max_steps = int(max_steps)
 
-    global_step = 0
+    global_step = start_step
     running_loss = 0.0
     start_time = time.time()
     model.train()
+
+    if start_step > 0:
+        print(
+            "Note: streaming restarts from the beginning of the dataset. "
+            f"Training continues counting from step {start_step}."
+        )
 
     for epoch in range(num_epochs):
         epoch_loss = 0.0
@@ -143,7 +196,7 @@ def main() -> None:
             labels = batch["labels"].to(device)
 
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_fp16):
-                logits = model(input_ids, attention_mask=attention_mask)
+                logits = forward_logits(model, input_ids, attention_mask)
                 loss = causal_lm_loss(logits, labels) / grad_accum
 
             scaler.scale(loss).backward()
