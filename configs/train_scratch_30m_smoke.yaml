@@ -1,5 +1,6 @@
 # Smaller/faster smoke test for scratch pretraining (~minutes, not hours)
 model:
+  size: 30m
   output_dir: outputs/tinycode-30m-smoke
   tokenizer: gpt2
 

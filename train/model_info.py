@@ -162,7 +162,7 @@ def describe_model(
     model_kind = model_cfg.get("kind", "qlora")
     is_scratch = model_kind == "scratch_pretrain" or Path(str(model_cfg["name"])).parts[-1].startswith(
         ("checkpoint-", "final")
-    ) or "tinycode-30m" in str(model_cfg["name"])
+    ) or any(tag in str(model_cfg["name"]) for tag in ("tinycode-10m", "tinycode-15m", "tinycode-30m"))
 
     info: dict[str, Any] = {
         "project": "TinyCodeLLM",

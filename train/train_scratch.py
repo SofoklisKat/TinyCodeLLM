@@ -21,10 +21,10 @@ import yaml
 from transformers import AutoTokenizer
 
 from train.model import (
+    build_tinycode_model,
     count_parameters,
     export_to_huggingface,
     patch_qwen2_config,
-    tinycode_30m,
 )
 from train.scratch_dataset import build_training_dataloader
 
@@ -49,11 +49,13 @@ def parse_resume_step(resume_path: Path) -> int:
 def load_model_for_training(
     device: torch.device,
     resume_from: Path | None,
+    model_size: str = "30m",
 ):
     if resume_from is None:
-        model = tinycode_30m()
+        model = build_tinycode_model(model_size)
         model.to(device)
         start_step = 0
+        print(f"Model size: {model_size}")
         print(f"Parameters: {count_parameters(model):,}")
         return model, start_step
 
@@ -98,7 +100,7 @@ def collate_batch(features: list[dict]) -> dict[str, torch.Tensor]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pretrain TinyCode 30M decoder from scratch")
+    parser = argparse.ArgumentParser(description="Pretrain TinyCode decoder from scratch (10m / 15m / 30m)")
     parser.add_argument(
         "--config",
         type=Path,
@@ -162,7 +164,11 @@ def main() -> None:
         collate_fn=collate_batch,
     )
 
-    model, start_step = load_model_for_training(device, resume_from)
+    model, start_step = load_model_for_training(
+        device,
+        resume_from,
+        model_size=str(model_cfg.get("size", "30m")),
+    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(),

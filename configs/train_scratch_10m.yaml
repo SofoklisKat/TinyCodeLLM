@@ -1,7 +1,7 @@
-# Pretrain TinyCode ~30M on full Python GitHub code (streaming, low disk use)
+# TinyCode ~10M — smallest footprint (good for 4GB GPUs)
 model:
-  size: 30m
-  output_dir: outputs/tinycode-30m
+  size: 10m
+  output_dir: outputs/tinycode-10m
   tokenizer: gpt2
 
 dataset:
@@ -12,12 +12,12 @@ dataset:
     - Python
   split: train
   text_column: code
-  max_samples: null  # full stream; set a number to cap examples
+  max_samples: null
 
 training:
   block_size: 512
-  per_device_train_batch_size: 4
-  gradient_accumulation_steps: 4
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 2  # effective batch = 16
   num_train_epochs: 1
   learning_rate: 3.0e-4
   weight_decay: 0.01

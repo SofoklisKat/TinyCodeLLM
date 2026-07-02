@@ -291,7 +291,7 @@ def qwen2_coder_05b(**overrides: int | float | bool) -> Qwen2ForCausalLM:
 
 
 def tinycode_30m_config(**overrides: int | float | bool) -> Qwen2Config:
-    """~30M-parameter Qwen2-style decoder tuned for 4-5GB overnight pretraining."""
+    """~30M-parameter Qwen2-style decoder tuned for 4-8GB overnight pretraining."""
     defaults: dict[str, int | float | bool] = {
         "vocab_size": 50_257,  # GPT-2 tokenizer size
         "hidden_size": 320,
@@ -310,9 +310,76 @@ def tinycode_30m_config(**overrides: int | float | bool) -> Qwen2Config:
     return Qwen2Config(**defaults)  # type: ignore[arg-type]
 
 
+def tinycode_15m_config(**overrides: int | float | bool) -> Qwen2Config:
+    """~15M-parameter decoder for 4GB GPUs and faster iteration."""
+    defaults: dict[str, int | float | bool] = {
+        "vocab_size": 50_257,
+        "hidden_size": 200,
+        "intermediate_size": 800,
+        "num_hidden_layers": 8,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 50,
+        "max_position_embeddings": 2_048,
+        "rms_norm_eps": 1e-6,
+        "rope_theta": 10_000.0,
+        "tie_word_embeddings": True,
+        "attention_dropout": 0.0,
+    }
+    defaults.update(overrides)
+    return Qwen2Config(**defaults)  # type: ignore[arg-type]
+
+
+def tinycode_10m_config(**overrides: int | float | bool) -> Qwen2Config:
+    """~10M-parameter decoder — smallest practical GPT-2-vocab footprint."""
+    defaults: dict[str, int | float | bool] = {
+        "vocab_size": 50_257,
+        "hidden_size": 160,
+        "intermediate_size": 640,
+        "num_hidden_layers": 6,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 40,
+        "max_position_embeddings": 2_048,
+        "rms_norm_eps": 1e-6,
+        "rope_theta": 10_000.0,
+        "tie_word_embeddings": True,
+        "attention_dropout": 0.0,
+    }
+    defaults.update(overrides)
+    return Qwen2Config(**defaults)  # type: ignore[arg-type]
+
+
+TINYCODE_MODEL_BUILDERS = {
+    "10m": tinycode_10m_config,
+    "15m": tinycode_15m_config,
+    "30m": tinycode_30m_config,
+}
+
+
+def build_tinycode_model(size: str = "30m", **overrides: int | float | bool) -> Qwen2ForCausalLM:
+    """Build a TinyCode decoder by size label: 10m, 15m, or 30m."""
+    size_key = size.lower().replace("-", "")
+    if size_key not in TINYCODE_MODEL_BUILDERS:
+        supported = ", ".join(sorted(TINYCODE_MODEL_BUILDERS))
+        raise ValueError(f"Unknown TinyCode model size {size!r}. Supported: {supported}")
+    config = TINYCODE_MODEL_BUILDERS[size_key](**overrides)
+    return Qwen2ForCausalLM(config)
+
+
 def tinycode_30m(**overrides: int | float | bool) -> Qwen2ForCausalLM:
     """Build the ~30M TinyCode decoder with random weights."""
-    return Qwen2ForCausalLM(tinycode_30m_config(**overrides))
+    return build_tinycode_model("30m", **overrides)
+
+
+def tinycode_15m(**overrides: int | float | bool) -> Qwen2ForCausalLM:
+    """Build the ~15M TinyCode decoder with random weights."""
+    return build_tinycode_model("15m", **overrides)
+
+
+def tinycode_10m(**overrides: int | float | bool) -> Qwen2ForCausalLM:
+    """Build the ~10M TinyCode decoder with random weights."""
+    return build_tinycode_model("10m", **overrides)
 
 
 def export_to_huggingface(model: Qwen2ForCausalLM, output_dir: str | Path) -> None:
@@ -354,8 +421,12 @@ def count_parameters(model: nn.Module, trainable_only: bool = False) -> int:
 
 
 def main() -> None:
+    for label in ("10m", "15m", "30m"):
+        model = build_tinycode_model(label)
+        print(f"TinyCode {label.upper()} decoder")
+        print(f"  Parameters: {count_parameters(model):,}")
+    print()
     model = tinycode_30m()
-    print("TinyCode 30M decoder")
     print(model)
     print()
     print(f"Total parameters:     {count_parameters(model):,}")

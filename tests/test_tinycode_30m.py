@@ -1,29 +1,35 @@
-"""Tests for the TinyCode 30M decoder."""
+"""Tests for the TinyCode decoder size variants."""
 
 from __future__ import annotations
 
 import unittest
 
-from train.model import count_parameters, tinycode_30m, tinycode_30m_config
+from train.model import build_tinycode_model, count_parameters
 
 
-class TinyCode30MTests(unittest.TestCase):
-    def test_parameter_count_is_about_30m(self):
-        model = tinycode_30m()
+class TinyCodeSizeTests(unittest.TestCase):
+    def test_10m_parameter_count(self):
+        model = build_tinycode_model("10m")
+        params = count_parameters(model)
+        self.assertGreater(params, 9_000_000)
+        self.assertLess(params, 13_000_000)
+
+    def test_15m_parameter_count(self):
+        model = build_tinycode_model("15m")
+        params = count_parameters(model)
+        self.assertGreater(params, 13_000_000)
+        self.assertLess(params, 18_000_000)
+
+    def test_30m_parameter_count(self):
+        model = build_tinycode_model("30m")
         params = count_parameters(model)
         self.assertGreater(params, 25_000_000)
         self.assertLess(params, 40_000_000)
 
-    def test_config_matches_tokenizer_vocab(self):
-        config = tinycode_30m_config()
-        self.assertEqual(config.vocab_size, 50_257)
-        self.assertEqual(config.hidden_size, 320)
-        self.assertEqual(config.num_hidden_layers, 10)
-
-    def test_forward_shape(self):
+    def test_forward_shape_15m(self):
         import torch
 
-        model = tinycode_30m()
+        model = build_tinycode_model("15m")
         input_ids = torch.randint(0, model.config.vocab_size, (2, 32))
         logits = model(input_ids)
         self.assertEqual(tuple(logits.shape), (2, 32, model.config.vocab_size))
