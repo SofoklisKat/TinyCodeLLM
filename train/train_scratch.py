@@ -118,7 +118,7 @@ def main() -> None:
     )
 
     use_fp16 = bool(train_cfg.get("fp16", False)) and device.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled=use_fp16)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_fp16)
     grad_accum = int(train_cfg.get("gradient_accumulation_steps", 1))
     num_epochs = int(train_cfg["num_train_epochs"])
     logging_steps = int(train_cfg.get("logging_steps", 50))

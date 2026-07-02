@@ -263,7 +263,12 @@ class StreamingCLMDataset(IterableDataset):
                 continue
 
             seen_examples += 1
-            token_buffer.extend(self.tokenizer.encode(text))
+            ids = self.tokenizer(
+                text,
+                add_special_tokens=False,
+                truncation=False,
+            )["input_ids"]
+            token_buffer.extend(ids)
             token_buffer.append(self.tokenizer.eos_token_id)
 
             while len(token_buffer) >= self.block_size:
