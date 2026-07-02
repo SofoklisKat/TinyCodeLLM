@@ -44,7 +44,12 @@ def load_hf_model_config(model_name: str, trust_remote_code: bool = False) -> di
         ) from exc
 
     hf_config = AutoConfig.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-    return hf_config.to_dict()
+    config_dict = hf_config.to_dict()
+    if "rope_theta" not in config_dict:
+        config_dict["rope_theta"] = float(
+            getattr(hf_config, "rope_theta", None) or 10_000.0
+        )
+    return config_dict
 
 
 def describe_qwen_architecture(hf_config: dict[str, Any]) -> dict[str, Any]:

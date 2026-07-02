@@ -20,7 +20,12 @@ import torch.nn.functional as F
 import yaml
 from transformers import AutoTokenizer
 
-from train.model import count_parameters, export_to_huggingface, tinycode_30m
+from train.model import (
+    count_parameters,
+    export_to_huggingface,
+    patch_qwen2_config,
+    tinycode_30m,
+)
 from train.scratch_dataset import build_training_dataloader
 
 
@@ -59,6 +64,7 @@ def load_model_for_training(
 
     print(f"Resuming weights from: {resume_from}")
     model = AutoModelForCausalLM.from_pretrained(resume_from)
+    patch_qwen2_config(model.config, default_rope_theta=10_000.0)
     model.to(device)
     start_step = parse_resume_step(resume_from)
     print(f"Resuming from step: {start_step}")

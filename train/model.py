@@ -37,6 +37,29 @@ class Qwen2Config:
     attention_dropout: float = 0.0
 
 
+def config_value(config: object, key: str, default: float | int | bool | None = None):
+    """Read a config field from a dataclass or Hugging Face PretrainedConfig."""
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def patch_qwen2_config(config: object, default_rope_theta: float = 10_000.0) -> object:
+    """Ensure HF/local Qwen2 configs expose rope_theta for older checkpoints."""
+    rope_theta = config_value(config, "rope_theta")
+    if rope_theta is None:
+        rope_params = config_value(config, "rope_parameters")
+        if isinstance(rope_params, dict):
+            rope_theta = rope_params.get("rope_theta")
+    if rope_theta is None:
+        rope_theta = default_rope_theta
+        if isinstance(config, dict):
+            config["rope_theta"] = rope_theta
+        else:
+            config.rope_theta = rope_theta
+    return config
+
+
 class Qwen2RMSNorm(nn.Module):
     def __init__(self, hidden_size: int, eps: float = 1e-6) -> None:
         super().__init__()
@@ -52,12 +75,15 @@ class Qwen2RMSNorm(nn.Module):
 class Qwen2RotaryEmbedding(nn.Module):
     def __init__(self, config: Qwen2Config) -> None:
         super().__init__()
+        config = patch_qwen2_config(config)
+        head_dim = int(config_value(config, "head_dim") or config.hidden_size // config.num_attention_heads)
+        rope_theta = float(config_value(config, "rope_theta", 10_000.0))
         inv_freq = 1.0 / (
-            config.rope_theta
-            ** (torch.arange(0, config.head_dim, 2, dtype=torch.float32) / config.head_dim)
+            rope_theta ** (torch.arange(0, head_dim, 2, dtype=torch.float32) / head_dim)
         )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.max_seq_len_cached = config.max_position_embeddings
+        max_position_embeddings = int(config_value(config, "max_position_embeddings", 2048))
+        self.max_seq_len_cached = max_position_embeddings
         t = torch.arange(self.max_seq_len_cached, dtype=torch.float32)
         freqs = torch.outer(t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1)
@@ -316,6 +342,7 @@ def export_to_huggingface(model: Qwen2ForCausalLM, output_dir: str | Path) -> No
     )
     hf_model = HFQwen2ForCausalLM(hf_config)
     hf_model.load_state_dict(model.state_dict(), strict=True)
+    patch_qwen2_config(hf_model.config, default_rope_theta=float(cfg.rope_theta))
     hf_model.save_pretrained(output_path)
     print(f"Saved Hugging Face checkpoint to {output_path}")
 
