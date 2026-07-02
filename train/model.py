@@ -391,25 +391,28 @@ def export_to_huggingface(model: Qwen2ForCausalLM, output_dir: str | Path) -> No
     output_path.mkdir(parents=True, exist_ok=True)
 
     cfg = model.config
+    patch_qwen2_config(cfg, default_rope_theta=10_000.0)
+    rope_theta = float(config_value(cfg, "rope_theta", 10_000.0))
+
     hf_config = HFQwen2Config(
-        vocab_size=cfg.vocab_size,
-        hidden_size=cfg.hidden_size,
-        intermediate_size=cfg.intermediate_size,
-        num_hidden_layers=cfg.num_hidden_layers,
-        num_attention_heads=cfg.num_attention_heads,
-        num_key_value_heads=cfg.num_key_value_heads,
-        head_dim=cfg.head_dim,
-        max_position_embeddings=cfg.max_position_embeddings,
-        rms_norm_eps=cfg.rms_norm_eps,
-        rope_theta=cfg.rope_theta,
-        tie_word_embeddings=cfg.tie_word_embeddings,
-        attention_dropout=cfg.attention_dropout,
+        vocab_size=int(config_value(cfg, "vocab_size")),
+        hidden_size=int(config_value(cfg, "hidden_size")),
+        intermediate_size=int(config_value(cfg, "intermediate_size")),
+        num_hidden_layers=int(config_value(cfg, "num_hidden_layers")),
+        num_attention_heads=int(config_value(cfg, "num_attention_heads")),
+        num_key_value_heads=int(config_value(cfg, "num_key_value_heads")),
+        head_dim=int(config_value(cfg, "head_dim")),
+        max_position_embeddings=int(config_value(cfg, "max_position_embeddings")),
+        rms_norm_eps=float(config_value(cfg, "rms_norm_eps", 1e-6)),
+        rope_theta=rope_theta,
+        tie_word_embeddings=bool(config_value(cfg, "tie_word_embeddings", True)),
+        attention_dropout=float(config_value(cfg, "attention_dropout", 0.0)),
         architectures=["Qwen2ForCausalLM"],
         model_type="qwen2",
     )
     hf_model = HFQwen2ForCausalLM(hf_config)
     hf_model.load_state_dict(model.state_dict(), strict=True)
-    patch_qwen2_config(hf_model.config, default_rope_theta=float(cfg.rope_theta))
+    patch_qwen2_config(hf_model.config, default_rope_theta=rope_theta)
     hf_model.save_pretrained(output_path)
     print(f"Saved Hugging Face checkpoint to {output_path}")
 
