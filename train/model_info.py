@@ -153,29 +153,52 @@ def describe_model(
 ) -> dict[str, Any]:
     """Return a structured description of the model used in this repo."""
     model_cfg = cfg["model"]
-    lora_cfg = cfg["lora"]
-    train_cfg = cfg["training"]
+    train_cfg = cfg.get("training", {})
+    model_kind = model_cfg.get("kind", "qlora")
+    is_scratch = model_kind == "scratch_pretrain" or Path(str(model_cfg["name"])).parts[-1].startswith(
+        ("checkpoint-", "final")
+    ) or "tinycode-30m" in str(model_cfg["name"])
 
     info: dict[str, Any] = {
         "project": "TinyCodeLLM",
         "base_model": model_cfg["name"],
-        "architecture": "Decoder-only causal language model (Qwen2.5-Coder family)",
-        "parameter_size": "~0.5B",
-        "task": "Python code generation / instruction following",
-        "fine_tuning": "PEFT LoRA on top of a frozen 4-bit quantized base model (QLoRA)",
-        "base_weights": "Frozen, loaded in 4-bit NF4 via bitsandbytes",
-        "trainable_weights": "LoRA adapter matrices only",
-        "lora_rank": lora_cfg["r"],
-        "lora_alpha": lora_cfg["lora_alpha"],
-        "lora_dropout": lora_cfg["lora_dropout"],
-        "lora_target_modules": lora_cfg["target_modules"],
-        "adapter_path": str(adapter_path) if adapter_path else None,
-        "output_dir": train_cfg["output_dir"],
-        "inference_note": (
-            "At inference, load the same base model and apply the saved LoRA adapter. "
-            "Architecture is unchanged; only small adapter weights differ from the base model."
-        ),
+        "architecture": "Decoder-only causal language model (Qwen2-style)",
+        "parameter_size": "unknown",
+        "task": "Python code completion" if is_scratch else "Python code generation / instruction following",
+        "output_dir": train_cfg.get("output_dir", "n/a"),
     }
+
+    if is_scratch:
+        info.update(
+            {
+                "fine_tuning": "Scratch causal LM pretrain on streamed GitHub Python code",
+                "base_weights": "All weights trained from random init",
+                "trainable_weights": "Full model",
+                "inference_note": (
+                    "Scratch snapshots complete raw code; they are not instruction-tuned. "
+                    "Expect weak MBPP scores until you run QLoRA fine-tuning on MBPP/Alpaca."
+                ),
+            }
+        )
+    else:
+        lora_cfg = cfg["lora"]
+        info.update(
+            {
+                "parameter_size": "~0.5B",
+                "fine_tuning": "PEFT LoRA on top of a frozen 4-bit quantized base model (QLoRA)",
+                "base_weights": "Frozen, loaded in 4-bit NF4 via bitsandbytes",
+                "trainable_weights": "LoRA adapter matrices only",
+                "lora_rank": lora_cfg["r"],
+                "lora_alpha": lora_cfg["lora_alpha"],
+                "lora_dropout": lora_cfg["lora_dropout"],
+                "lora_target_modules": lora_cfg["target_modules"],
+                "adapter_path": str(adapter_path) if adapter_path else None,
+                "inference_note": (
+                    "At inference, load the same base model and apply the saved LoRA adapter. "
+                    "Architecture is unchanged; only small adapter weights differ from the base model."
+                ),
+            }
+        )
 
     if include_architecture:
         try:
@@ -188,7 +211,9 @@ def describe_model(
             info["architecture_source"] = "fallback (offline or transformers unavailable)"
         else:
             info["architecture_source"] = "huggingface config.json"
-        info["qwen_architecture"] = describe_qwen_architecture(hf_config)
+        arch = describe_qwen_architecture(hf_config)
+        info["qwen_architecture"] = arch
+        info["parameter_size"] = format_param_count(arch["estimated_total_params"])
 
     return info
 
@@ -215,12 +240,13 @@ def print_model_spec(
     print(f"Fine-tuning:       {info['fine_tuning']}")
     print(f"Base weights:      {info['base_weights']}")
     print(f"Trainable weights: {info['trainable_weights']}")
-    print(f"LoRA rank (r):     {info['lora_rank']}")
-    print(f"LoRA alpha:        {info['lora_alpha']}")
-    print(f"LoRA dropout:      {info['lora_dropout']}")
-    print("LoRA target layers:")
-    for module in info["lora_target_modules"]:
-        print(f"  - {module}")
+    if "lora_rank" in info:
+        print(f"LoRA rank (r):     {info['lora_rank']}")
+        print(f"LoRA alpha:        {info['lora_alpha']}")
+        print(f"LoRA dropout:      {info['lora_dropout']}")
+        print("LoRA target layers:")
+        for module in info["lora_target_modules"]:
+            print(f"  - {module}")
     if adapter_path is not None:
         print(f"Adapter path:      {adapter_path}")
     print(f"Output dir:        {info['output_dir']}")

@@ -64,6 +64,7 @@ def write_eval_config(snapshot: Path, config_path: Path) -> None:
     config = {
         "model": {
             "name": str(snapshot),
+            "kind": "scratch_pretrain",
             "trust_remote_code": False,
         },
         "dataset": {
@@ -112,15 +113,27 @@ def run_generation(snapshot: Path) -> None:
     ]
 
     print("=" * 72)
-    print("Quick generation preview")
+    print("Quick generation preview (new tokens only)")
+    print("Note: scratch snapshots are not instruction-tuned; weak completion is expected.")
     print("=" * 72)
     for prompt in prompts:
         input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
+        prompt_len = input_ids.shape[-1]
         with torch.inference_mode():
-            output_ids = model.generate(input_ids, max_new_tokens=80, do_sample=False)
+            output_ids = model.generate(
+                input_ids,
+                max_new_tokens=80,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.15,
+            )
+        completion = tokenizer.decode(output_ids[0][prompt_len:], skip_special_tokens=True)
         print("-" * 72)
+        print("Prompt:")
         print(prompt)
-        print(tokenizer.decode(output_ids[0], skip_special_tokens=True))
+        print("Completion:")
+        print(completion if completion.strip() else "(empty / whitespace only)")
     print("=" * 72)
 
 
